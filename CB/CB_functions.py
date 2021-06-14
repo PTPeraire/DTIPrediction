@@ -10,18 +10,21 @@ from tqdm import tqdm
 from scipy.spatial import distance
 import numpy as np
 
-def get_bio():
-    with open("/aloy/home/ptorren/parse_chembl/biology_metadata_v27_onlypchembl.pkl", "rb") as f:
-        bio_md27 = pickle.load(f)
-    return bio_md27
+def get_human_targets():
+    with open("./CB/human_targets.pkl", "rb") as f:
+        human = pickle.load(f)
+    return human
 
-def _create_target_profile(opath):
-    with h5py.File("/aloy/web_checker/current/full/B/B4/B4.001/sign0/sign0.h5", "r") as f:
+def _create_target_profile(opath, space, root):
+    if root is None:
+        print("Please introduce CC root")
+        return None
+    with h5py.File(os.path.join(root,"B/B4/B4.001/sign0/sign0.h5"), "r") as f:
         B4 = f["V"][:]
         features = f["features"][:]
         keys = f["keys"][:]
     
-    with h5py.File("/aloy/web_checker/current/full/B/B4/B4.001/sign3/sign3.h5", "r") as f:
+    with h5py.File(os.path.join(root, "B/B4/B4.001/sign3/sign3.h5"), "r") as f:
         keysS3 = f["keys"][:]
         
     B4T = B4.transpose()
@@ -40,8 +43,10 @@ def _create_target_profile(opath):
     del keys
     del inchis
     
-    sign_GLOBAL = Signaturizer('GLOBAL')
-    compound_sign_GLOBAL = {}
+    if space is None:
+        space = 'GLOBAL'
+    sign = Signaturizer(space)
+    compound_sign = {}
     for tgt, up  in tqdm(zip(B4T, features)):
         if up.startswith("Class"):
             continue
@@ -49,11 +54,11 @@ def _create_target_profile(opath):
         if len(cpd_idx) < 2:
             continue
         cpd_inch = compound_inchis[up]
-        compound_sign_GLOBAL[up] = sign_GLOBAL.predict(cpd_inch, keytype='InChI').signature
+        compound_sign[up] = sign.predict(cpd_inch, keytype='InChI').signature
     with open(opath, "wb") as f:
-        pickle.dump(compound_sign_GLOBAL,f)
+        pickle.dump(compound_sign,f)
 
-def get_targetprofiles(opath):
+def get_targetprofiles(opath, space=None, root=None):
     if os.path.exists(opath):
         with open(opath, "rb") as f:
             target_profile = pickle.load(f)
@@ -62,7 +67,7 @@ def get_targetprofiles(opath):
         print("This option is currently not available: please use the target profile file provided")
         return None
         # TODO: Test creating target profiles
-#         _create_target_profile()
+#         _create_target_profile(opath, space)
 #         with open(opath, "rb") as f:
 #             target_profile = pickle.load(f)
 #         return target_profile
@@ -79,8 +84,8 @@ def map_D2T(query_sign, compound_signs, uniprot=None, n_cpus=None):
         uniprot = sorted(list(compound_signs.keys()))
     elif type(uniprot) == str:
         if uniprot.lower() == 'human':
-            bio_md27 = get_bio()
-            uniprot = np.asarray(list(compound_signs.keys()))[np.isin(list(compound_signs.keys()), bio_md27.uniprot_id.values.tolist())].tolist()
+            human_targets = get_human_targets()
+            uniprot = np.asarray(list(compound_signs.keys()))[np.isin(list(compound_signs.keys()), human_targets)].tolist()
         else:
             print("Target universe not contemplated")
             exit()
@@ -102,5 +107,5 @@ def run(query_sign, compound_sign, uniprot=None, n_cpus=None):
     results, targets = map_D2T(query_sign, compound_sign, uniprot)
     rank = stats.rankdata(results, method='ordinal')
     scal = RobustScaler().fit_transform(results)
-    df = pd.DataFrame([[tgt, r, dist, s ] for tgt, r, dist, s in zip(targets, rank.flatten(), np.asarray(results).flatten(), scal.flatten())], columns = ['Target', 'Rank', 'Score', 'Scale'])
+    df = pd.DataFrame([[tgt, r, dist, s ] for tgt, r, dist, s in zip(targets, rank.flatten(), np.asarray(results).flatten(), scal.flatten())], columns = ['Target', 'Rank', 'Score', 'ZScore'])
     return df
